@@ -1,0 +1,163 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg-app: #f8fafc;
+  --bg-card: #ffffff;
+  --bg-elevated: #f1f5f9;
+  --bg-input: #f8fafc;
+  --border-subtle: #e2e8f0;
+  --text-primary: #0f172a;
+  --text-secondary: #475569;
+  --text-muted: #64748b;
+  color-scheme: light;
+}
+
+html.dark {
+  --bg-app: #0b0e14;
+  --bg-card: #151a23;
+  --bg-elevated: #1c2330;
+  --bg-input: #0b0e14;
+  --border-subtle: #232a38;
+  --text-primary: #f3f4f6;
+  --text-secondary: #cbd5e1;
+  --text-muted: #94a3b8;
+  color-scheme: dark;
+}
+
+@layer base {
+  html,
+  body {
+    background-color: var(--bg-app);
+    color: var(--text-primary);
+    -webkit-tap-highlight-color: transparent;
+    overscroll-behavior-y: contain;
+    transition: background-color 150ms ease, color 150ms ease;
+  }
+
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+  }
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+@keyframes rsMonogramScale {
+  0% {
+    opacity: 0;
+    transform: scale(0.85);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes rsTrendDraw {
+  0% {
+    stroke-dashoffset: 100;
+    opacity: 0.2;
+  }
+  15% {
+    opacity: 1;
+  }
+  100% {
+    stroke-dashoffset: 0;
+    opacity: 1;
+  }
+}
+
+@keyframes rsArrowDraw {
+  0%,
+  55% {
+    stroke-dashoffset: 100;
+    opacity: 0;
+  }
+  65% {
+    opacity: 1;
+  }
+  100% {
+    stroke-dashoffset: 0;
+    opacity: 1;
+  }
+}
+
+@keyframes rsCandlesFade {
+  0% {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes rsSplashTextIn {
+  0% {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes rsLoadingBarFill {
+  0% {
+    width: 8%;
+  }
+  100% {
+    width: 100%;
+  }
+}
+
+.rs-monogram-scale {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: rsMonogramScale 0.55s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+.rs-candles-in {
+  transform-box: fill-box;
+  transform-origin: bottom center;
+  animation: rsCandlesFade 0.45s ease-out 0.1s both;
+}
+
+.rs-trend-draw {
+  stroke-dasharray: 100;
+  stroke-dashoffset: 100;
+  animation: rsTrendDraw 0.6s cubic-bezier(0.22, 1, 0.36, 1) 0.05s forwards;
+}
+
+.rs-arrow-draw {
+  stroke-dasharray: 100;
+  stroke-dashoffset: 100;
+  animation: rsArrowDraw 0.65s ease-out forwards;
+}
+
+.rs-splash-text-in {
+  opacity: 0;
+  animation: rsSplashTextIn 0.48s ease-out 0.48s forwards;
+}
+
+.rs-loading-bar {
+  width: 8%;
+  animation: rsLoadingBarFill 0.72s cubic-bezier(0.22, 1, 0.36, 1) 0.5s forwards;
+}
+

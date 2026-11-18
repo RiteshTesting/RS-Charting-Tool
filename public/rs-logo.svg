@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="512" height="512" fill="none">
+  <defs>
+    <radialGradient id="rs-ambient" cx="78%" cy="24%" r="65%">
+      <stop offset="0%" stop-color="#10B981" stop-opacity="0.28" />
+      <stop offset="100%" stop-color="#0F172A" stop-opacity="0" />
+    </radialGradient>
+    <linearGradient id="rs-border" x1="8" y1="8" x2="120" y2="120" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#34D399" stop-opacity="0.85" />
+      <stop offset="55%" stop-color="#10B981" stop-opacity="0.4" />
+      <stop offset="100%" stop-color="#059669" stop-opacity="0.7" />
+    </linearGradient>
+    <linearGradient id="rs-trend" x1="20" y1="99" x2="104" y2="32" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#059669" />
+      <stop offset="50%" stop-color="#10B981" />
+      <stop offset="100%" stop-color="#34D399" />
+    </linearGradient>
+  </defs>
+
+  <rect x="4" y="4" width="120" height="120" rx="28" fill="#0F172A" />
+  <rect x="4" y="4" width="120" height="120" rx="28" fill="url(#rs-ambient)" />
+  <rect x="5.25" y="5.25" width="117.5" height="117.5" rx="26.75" stroke="url(#rs-border)" stroke-width="2.5" />
+
+  <!-- Stylized Upward Emerald Candlesticks -->
+  <line x1="28" y1="83" x2="28" y2="107" stroke="#059669" stroke-width="2.2" stroke-linecap="round" />
+  <rect x="23.5" y="88.5" width="9" height="12.5" rx="2" fill="#059669" />
+
+  <line x1="48" y1="76" x2="48" y2="103" stroke="#10B981" stroke-width="2.2" stroke-linecap="round" />
+  <rect x="43.5" y="81.5" width="9" height="14" rx="2" fill="#10B981" />
+
+  <line x1="68" y1="67" x2="68" y2="96" stroke="#34D399" stroke-width="2.2" stroke-linecap="round" />
+  <rect x="63.5" y="73" width="9" height="15" rx="2" fill="#34D399" />
+
+  <!-- Bold RS Monogram -->
+  <path
+    d="M 23 68 L 23 26 L 39 26 C 46.5 26 50.5 30.2 50.5 36.8 C 50.5 43.2 46.5 47.4 39 47.4 L 23 47.4 M 38 47.4 L 50.5 68"
+    stroke="#F8FAFC"
+    stroke-width="8.5"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+  <path
+    d="M 84 31.5 C 81.5 27.2 77 25.8 71.5 25.8 C 64 25.8 59.5 29.8 59.5 35.6 C 59.5 41.8 64.5 44.2 72.5 46.2 C 81 48.2 85.5 51.2 85.5 57.8 C 85.5 64 80 68.2 71.5 68.2 C 65 68.2 60.5 66.2 58 61.8"
+    stroke="#F8FAFC"
+    stroke-width="8.5"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+
+  <!-- Emerald Momentum Trendline & Arrow -->
+  <path
+    d="M 20 99 L 44 84 L 62 91 L 102 34"
+    stroke="url(#rs-trend)"
+    stroke-width="5.5"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+  <path
+    d="M 90 36.5 L 103.5 32 L 103 45.5"
+    stroke="#34D399"
+    stroke-width="5.5"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+</svg>
