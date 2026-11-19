@@ -1,0 +1,21 @@
+<resources>
+    <string name="app_name">NsePulse</string>
+    <string name="nav_screener">Screener</string>
+    <string name="nav_scanners">Scanners</string>
+    <string name="nav_watchlist">Watchlist</string>
+    <string name="search_nse_hint">Search any NSE stock (e.g. RELIANCE, TCS, HAL)…</string>
+    <string name="action_filters">Filters</string>
+    <string name="action_refresh">Refresh NSE Data</string>
+    <string name="action_refresh_eod">Refresh EOD</string>
+    <string name="eod_source_title">EOD Market Data Source</string>
+    <string name="action_clear_filters">Reset</string>
+    <string name="action_save_preset">Save Scan</string>
+    <string name="action_add_watchlist">Add to Watchlist</string>
+    <string name="action_remove_watchlist">Remove from Watchlist</string>
+    <string name="empty_screener_title">No NSE stocks match these indicators</string>
+    <string name="empty_screener_subtitle">Try widening your RSI range, switching timeframe, or resetting Moving Average filters.</string>
+    <string name="empty_watchlist_title">Your NSE Watchlist is empty</string>
+    <string name="empty_watchlist_subtitle">Tap the star icon on any NSE stock to track its RSI and Moving Average signals across timeframes.</string>
+    <string name="error_network_title">Unable to reach NSE feed</string>
+    <string name="action_retry">Retry</string>
+</resources>
