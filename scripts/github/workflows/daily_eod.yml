@@ -1,0 +1,36 @@
+name: Daily NSE EOD Data Update
+
+on:
+  schedule:
+    # 11:00 UTC = 4:30 PM IST (Monday to Friday)
+    - cron: '0 11 * * 1-5'
+  workflow_dispatch: # मैन्युअल टेस्ट करने के लिए बटन
+
+permissions:
+  contents: write
+
+jobs:
+  update-eod:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install yfinance pandas numpy
+
+      - name: Fetch NSE EOD & Calculate Indicators
+        run: python scripts/fetch_eod.py
+
+      - name: Commit and push updated JSON
+        run: |
+          git config user.name "RS EOD Bot"
+          git config user.email "bot@users.noreply.github.com"
+          git add public/screener_data.json
+          git commit -m "chore: update NSE EOD data" || exit 0
+          git push
