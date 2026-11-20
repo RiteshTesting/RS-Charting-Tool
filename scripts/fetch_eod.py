@@ -36,19 +36,18 @@ def calc_wma(series, period):
 
 def main():
     symbols = get_nifty500_symbols()
-    nifty = yf.download(BENCHMARK, period="1y", interval="1d", progress=False)
+    nifty = yf.download(BENCHMARK, period="2y", interval="1d", progress=False)
     if isinstance(nifty.columns, pd.MultiIndex):
         nifty.columns = nifty.columns.get_level_values(0)
     nifty_ret_3m = float(nifty["Close"].iloc[-1] / nifty["Close"].iloc[-63] - 1) if len(nifty) > 63 else 0.0
 
     stocks_output = []
-    raw_rs_scores = []
     batch_size = 250
 
     for i in range(0, len(symbols), batch_size):
         batch = symbols[i:i + batch_size]
         print(f"Downloading batch {i // batch_size + 1} ({len(batch)} stocks)...")
-        data = yf.download(batch, period="1y", interval="1d", group_by="ticker", threads=True, progress=False)
+        data = yf.download(batch, period="2y", interval="1d", group_by="ticker", threads=True, progress=False)
 
         for sym in batch:
             try:
@@ -81,16 +80,15 @@ def main():
                 ret_3m = float(close.iloc[-1] / close.iloc[-63] - 1)
                 ret_6m = float(close.iloc[-1] / close.iloc[-126] - 1) if len(close) > 126 else ret_3m
                 rs_raw = (0.6 * (ret_3m - nifty_ret_3m)) + (0.4 * ret_6m)
-                raw_rs_scores.append(rs_raw)
 
                 vol_avg20 = float(vol.rolling(20).mean().iloc[-1])
                 vol_ratio = round(float(vol.iloc[-1]) / vol_avg20, 2) if vol_avg20 > 0 else 1.0
-                high_52w = float(high.max())
+                high_52w = float(high.tail(252).max())
                 curr_close = float(close.iloc[-1])
                 prev_close = float(close.iloc[-2])
                 change_pct = round(((curr_close - prev_close) / prev_close) * 100, 2)
 
-                # 120 daily candles (~6 months) keeps NIFTY 500 JSON ~2.5 MB
+                # ~500 daily candles (2 years) for smooth D / W / M resampling
                 candles = [
                     {
                         "time": idx.strftime("%Y-%m-%d"),
@@ -100,7 +98,7 @@ def main():
                         "close": round(float(r["Close"]), 2),
                         "volume": int(r["Volume"])
                     }
-                    for idx, r in df.tail(120).iterrows()
+                    for idx, r in df.tail(500).iterrows()
                 ]
 
                 stocks_output.append({
