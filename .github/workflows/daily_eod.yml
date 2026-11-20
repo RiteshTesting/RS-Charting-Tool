@@ -2,8 +2,12 @@ name: Daily NSE EOD Data Update
 
 on:
   schedule:
-    # 11:00 UTC = 4:30 PM IST (Monday to Friday)
-    - cron: '0 11 * * 1-5'
+    # 12:00 PM IST = 06:30 UTC (Monday to Friday)
+    - cron: '30 6 * * 1-5'
+    # 2:30 PM IST = 09:00 UTC (Monday to Friday)
+    - cron: '0 9 * * 1-5'
+    # 5:00 PM IST = 11:30 UTC (Final EOD Closing, Monday to Friday)
+    - cron: '30 11 * * 1-5'
   workflow_dispatch: # मैन्युअल टेस्ट करने के लिए बटन
 
 permissions:
