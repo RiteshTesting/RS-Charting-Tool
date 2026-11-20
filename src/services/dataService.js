@@ -6,7 +6,7 @@
  * and RS Rating (1-99) from 260 daily OHLCV candles per NSE stock.
  */
 
-export const EOD_DATA_URL = '';
+export const EOD_DATA_URL = '/screener_data.json';
 const STORAGE_URL_KEY = 'swingpulse_eod_data_url';
 
 export function getConfiguredEodUrl() {
@@ -25,6 +25,121 @@ export function setConfiguredEodUrl(url) {
   } catch {
     // ignore storage errors
   }
+}
+
+function isFiniteNum(v) {
+  return typeof v === 'number' && Number.isFinite(v);
+}
+
+function toFiniteNum(v) {
+  if (typeof v === 'number') return Number.isFinite(v) ? v : null;
+  if (typeof v === 'string' && v.trim() !== '') {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
+function normalizeCandleTime(rawTime) {
+  if (typeof rawTime === 'number' && Number.isFinite(rawTime)) {
+    return rawTime > 1e11 ? Math.floor(rawTime / 1000) : rawTime;
+  }
+  if (typeof rawTime === 'string') {
+    const trimmed = rawTime.trim();
+    if (/^\d{4}-\d{2}-\d{2}/.test(trimmed)) {
+      return trimmed.slice(0, 10);
+    }
+    const parsed = Date.parse(trimmed);
+    if (Number.isFinite(parsed)) {
+      return new Date(parsed).toISOString().slice(0, 10);
+    }
+  }
+  return null;
+}
+
+function normalizeCandles(rawCandles, fallbackPrice, fallbackVol) {
+  const seen = new Map();
+  if (Array.isArray(rawCandles)) {
+    for (const c of rawCandles) {
+      if (!c || typeof c !== 'object') continue;
+      const time = normalizeCandleTime(c.time ?? c.date ?? c.timestamp);
+      const close = toFiniteNum(c.close ?? c.c);
+      if (time == null || close == null) continue;
+      const open = toFiniteNum(c.open ?? c.o) ?? close;
+      const high = toFiniteNum(c.high ?? c.h) ?? Math.max(open, close);
+      const low = toFiniteNum(c.low ?? c.l) ?? Math.min(open, close);
+      const volume = Math.max(0, Math.round(toFiniteNum(c.volume ?? c.v) ?? 0));
+      seen.set(String(time), {
+        time,
+        open: +open.toFixed(2),
+        high: +Math.max(high, open, close).toFixed(2),
+        low: +Math.min(low, open, close).toFixed(2),
+        close: +close.toFixed(2),
+        volume,
+      });
+    }
+  }
+
+  const list = Array.from(seen.values()).sort((a, b) => {
+    if (typeof a.time === 'number' && typeof b.time === 'number') return a.time - b.time;
+    return String(a.time).localeCompare(String(b.time));
+  });
+
+  if (list.length === 0) {
+    const px = toFiniteNum(fallbackPrice) ?? 100;
+    const vol = Math.max(0, Math.round(toFiniteNum(fallbackVol) ?? 0));
+    list.push({
+      time: new Date().toISOString().slice(0, 10),
+      open: +px.toFixed(2),
+      high: +px.toFixed(2),
+      low: +px.toFixed(2),
+      close: +px.toFixed(2),
+      volume: vol,
+    });
+  }
+  return list;
+}
+
+function alignSeriesOverride(rawField, computedSeries, candles) {
+  const len = candles.length;
+  if (Array.isArray(rawField) && rawField.length > 0) {
+    const out = new Array(len).fill(null);
+    if (typeof rawField[0] === 'object' && rawField[0] !== null) {
+      const byTime = new Map();
+      for (const pt of rawField) {
+        const t = normalizeCandleTime(pt.time ?? pt.date);
+        const v = toFiniteNum(pt.value ?? pt.val);
+        if (t != null && v != null) byTime.set(String(t), v);
+      }
+      candles.forEach((c, idx) => {
+        const v = byTime.get(String(c.time));
+        out[idx] = v != null ? v : computedSeries[idx] ?? null;
+      });
+      return out;
+    }
+    const offset = len - rawField.length;
+    for (let i = 0; i < rawField.length; i++) {
+      const targetIdx = i + offset;
+      if (targetIdx >= 0 && targetIdx < len) {
+        const v = toFiniteNum(rawField[i]);
+        out[targetIdx] = v != null ? v : computedSeries[targetIdx] ?? null;
+      }
+    }
+    return out;
+  }
+
+  const scalar = toFiniteNum(rawField);
+  if (scalar != null && len > 0) {
+    const out = [...computedSeries];
+    out[len - 1] = scalar;
+    return out;
+  }
+  return computedSeries;
+}
+
+function withCacheBuster(url) {
+  const sep = url.includes('?') ? '&' : '?';
+  return `${url}${sep}t=${Date.now()}`;
 }
 
 function createRng(seed) {
@@ -419,15 +534,37 @@ function computeRawPerfScore(closes) {
   return 0.4 * r3m + 0.25 * r6m + 0.2 * r9m + 0.15 * r12m;
 }
 
-function enrichStocks(rawStocks) {
-  const perfList = rawStocks.map((stock) => {
-    const closes = stock.candles.map((c) => c.close);
+const UNIVERSE_META_MAP = new Map(
+  NSE_UNIVERSE.map((s) => [s.symbol.toUpperCase(), { name: s.name, sector: s.sector }])
+);
+
+function enrichStocks(rawStocks, options = {}) {
+  const { isExternal = false } = options;
+
+  const normalizedList = rawStocks
+    .filter((s) => s && s.symbol)
+    .map((stock) => {
+      const symbol = String(stock.symbol).trim();
+      const lookupKey = symbol.replace(/\.NS$/i, '').toUpperCase();
+      const meta = UNIVERSE_META_MAP.get(lookupKey);
+      const candles = normalizeCandles(stock.candles, stock.price ?? stock.close, stock.volume);
+      return {
+        raw: stock,
+        symbol,
+        name: stock.name || meta?.name || lookupKey,
+        sector: stock.sector || meta?.sector || 'NSE Equity',
+        candles,
+      };
+    });
+
+  const perfList = normalizedList.map((item) => {
+    const closes = item.candles.map((c) => c.close);
+    const prevIdx = Math.max(0, closes.length - 22);
+    const baseClose = closes[prevIdx] || closes[0] || 1;
     return {
-      symbol: stock.symbol,
+      symbol: item.symbol,
       rawScore: computeRawPerfScore(closes),
-      mom1M:
-        (closes[closes.length - 1] - closes[Math.max(0, closes.length - 22)]) /
-        closes[Math.max(0, closes.length - 22)],
+      mom1M: (closes[closes.length - 1] - baseClose) / baseClose,
     };
   });
 
@@ -435,114 +572,172 @@ function enrichStocks(rawStocks) {
   const rsMap = new Map();
   const n = sortedByScore.length;
   sortedByScore.forEach((item, idx) => {
-    const rating = n === 1 ? 50 : Math.round(12 + (idx / (n - 1)) * 86);
+    const rating = n <= 1 ? 50 : Math.round(12 + (idx / (n - 1)) * 86);
     rsMap.set(item.symbol, { rsRating: rating, rawScore: item.rawScore, mom1M: item.mom1M });
   });
 
-  return rawStocks.map((stock) => {
-    const candles = stock.candles;
+  return normalizedList.map(({ raw: stock, symbol, name, sector, candles }) => {
     const len = candles.length;
     const closes = candles.map((c) => c.close);
     const volumes = candles.map((c) => c.volume);
 
-    // SMAs
-    const sma20 = calculateSMA(closes, 20);
-    const sma50 = calculateSMA(closes, 50);
-    const sma100 = calculateSMA(closes, 100);
-    const sma200 = calculateSMA(closes, 200);
+    // Base indicator series computed from candles, with optional direct overrides from EOD JSON
+    const sma20 = alignSeriesOverride(stock.sma20, calculateSMA(closes, 20), candles);
+    const sma50 = alignSeriesOverride(stock.sma50, calculateSMA(closes, 50), candles);
+    const sma100 = alignSeriesOverride(stock.sma100, calculateSMA(closes, 100), candles);
+    const sma200 = alignSeriesOverride(stock.sma200, calculateSMA(closes, 200), candles);
 
-    // EMAs
-    const ema9 = calculateEMA(closes, 9);
-    const ema20 = calculateEMA(closes, 20);
-    const ema45 = calculateEMA(closes, 45);
-    const ema50 = calculateEMA(closes, 50);
-    const ema200 = calculateEMA(closes, 200);
+    const ema9 = alignSeriesOverride(stock.ema9, calculateEMA(closes, 9), candles);
+    const ema20 = alignSeriesOverride(stock.ema20, calculateEMA(closes, 20), candles);
+    const ema45 = alignSeriesOverride(stock.ema45, calculateEMA(closes, 45), candles);
+    const ema50 = alignSeriesOverride(stock.ema50, calculateEMA(closes, 50), candles);
+    const ema200 = alignSeriesOverride(stock.ema200, calculateEMA(closes, 200), candles);
 
-    // Bollinger Bands (20, 2)
-    const bb = calculateBollingerBands(closes, 20, 2);
+    const bbCalc = calculateBollingerBands(closes, 20, 2);
+    const bbUpper = alignSeriesOverride(stock.bbUpper, bbCalc.upper, candles);
+    const bbLower = alignSeriesOverride(stock.bbLower, bbCalc.lower, candles);
+    const bbMiddle = alignSeriesOverride(stock.bbMiddle, bbCalc.middle, candles);
+    const bbBandwidth = [...bbCalc.bandwidth];
+    if (len > 0 && bbUpper[len - 1] != null && bbLower[len - 1] != null) {
+      if (bbMiddle[len - 1] == null) {
+        bbMiddle[len - 1] = +((bbUpper[len - 1] + bbLower[len - 1]) / 2).toFixed(2);
+      }
+      if (bbMiddle[len - 1] > 0) {
+        bbBandwidth[len - 1] = +((bbUpper[len - 1] - bbLower[len - 1]) / bbMiddle[len - 1]).toFixed(4);
+      }
+    }
 
-    // Volume MA (20)
     const volMa20 = calculateSMA(volumes, 20);
 
-    // RSI(14) + EMA(45) of RSI(14) + Weekly RSI(14)
-    const rsi14 = calculateRSI(closes, 14);
-    const rsiEma45 = calculateEMA(rsi14, 45);
-    const weeklyRsi = calculateWeeklyRSI(candles, 14);
+    const rsi14 = alignSeriesOverride(stock.rsi14, calculateRSI(closes, 14), candles);
+    const rsiEma45 = alignSeriesOverride(
+      stock.rsi14Ema45 ?? stock.rsiEma45,
+      calculateEMA(rsi14, 45),
+      candles
+    );
+    const weeklyRsi = toFiniteNum(stock.weeklyRsi) ?? calculateWeeklyRSI(candles, 14);
 
     // Hilega Milega (NK Sir): RSI(9), 3 EMA of RSI(9), 21 WMA of RSI(9)
-    const rsi9 = calculateRSI(closes, 9);
-    const hmEma3 = calculateEMA(rsi9, 3);
-    const hmWma21 = calculateWMA(rsi9, 21);
+    const rsi9 = alignSeriesOverride(stock.rsi9, calculateRSI(closes, 9), candles);
+    const hmEma3 = alignSeriesOverride(stock.hmEma3, calculateEMA(rsi9, 3), candles);
+    const hmWma21 = alignSeriesOverride(stock.hmWma21, calculateWMA(rsi9, 21), candles);
 
     const latest = candles[len - 1];
-    const prev = candles[len - 2];
-    const changePct = +(((latest.close - prev.close) / prev.close) * 100).toFixed(2);
+    const prev = len >= 2 ? candles[len - 2] : latest;
 
+    const closePrice = toFiniteNum(stock.price ?? stock.close) ?? latest.close;
+    const changePct =
+      toFiniteNum(stock.changePct) ??
+      (prev.close > 0 ? +(((closePrice - prev.close) / prev.close) * 100).toFixed(2) : 0);
+
+    const latestVolume = toFiniteNum(stock.volume) ?? latest.volume;
     const last20 = candles.slice(-20);
-    const avgVol20 = last20.reduce((acc, c) => acc + c.volume, 0) / last20.length;
-    const volMultiplier = +(latest.volume / avgVol20).toFixed(2);
+    const computedAvgVol20 =
+      last20.reduce((acc, c) => acc + c.volume, 0) / Math.max(1, last20.length);
+
+    const providedVolRatio = toFiniteNum(stock.volRatio ?? stock.volMultiplier);
+    const volMultiplier =
+      providedVolRatio != null
+        ? +providedVolRatio.toFixed(2)
+        : computedAvgVol20 > 0
+        ? +(latestVolume / computedAvgVol20).toFixed(2)
+        : 1;
+    const avgVol20 =
+      computedAvgVol20 > 0
+        ? computedAvgVol20
+        : volMultiplier > 0
+        ? latestVolume / volMultiplier
+        : latestVolume;
+
     const avgTurnoverCr = +(
-      last20.reduce((acc, c) => acc + (c.close * c.volume) / 1e7, 0) / last20.length
+      last20.reduce((acc, c) => acc + (c.close * c.volume) / 1e7, 0) / Math.max(1, last20.length)
     ).toFixed(1);
 
-    const high52W = Math.max(...candles.slice(-252).map((c) => c.high));
-    const prev52WHigh = Math.max(...candles.slice(-252, -1).map((c) => c.high));
-    const distFrom52WHighPct = +(((latest.close - high52W) / high52W) * 100).toFixed(2);
+    const computedHigh52W = Math.max(...candles.slice(-252).map((c) => c.high));
+    const high52W = toFiniteNum(stock.high52w ?? stock.high52W) ?? computedHigh52W;
+    const prevSlice52 = candles.slice(-252, -1);
+    const prev52WHigh = prevSlice52.length
+      ? Math.max(...prevSlice52.map((c) => c.high))
+      : high52W;
+
+    const rawDist52 = toFiniteNum(stock.distFrom52wPct ?? stock.distFrom52WHighPct);
+    let distFrom52WHighPct;
+    if (rawDist52 != null) {
+      // Normalize positive distance-below-high (e.g. 1.5 when close < high52W) to negative (-1.5)
+      distFrom52WHighPct =
+        rawDist52 > 0 && closePrice < high52W * 0.9999
+          ? +(-rawDist52).toFixed(2)
+          : +rawDist52.toFixed(2);
+    } else {
+      distFrom52WHighPct =
+        high52W > 0 ? +(((closePrice - high52W) / high52W) * 100).toFixed(2) : 0;
+    }
 
     const recent10Low = Math.min(...candles.slice(-10).map((c) => c.low));
-    const swingLowStop = +(recent10Low * 0.997).toFixed(2);
+    const swingLowStop =
+      toFiniteNum(stock.swingLowStop) ?? +(recent10Low * 0.997).toFixed(2);
 
-    const cSma20 = sma20[len - 1];
-    const cSma50 = sma50[len - 1];
-    const cSma100 = sma100[len - 1];
-    const cSma200 = sma200[len - 1];
+    const cSma20 = toFiniteNum(stock.sma20) ?? sma20[len - 1];
+    const cSma50 = toFiniteNum(stock.sma50) ?? sma50[len - 1];
+    const cSma100 = toFiniteNum(stock.sma100) ?? sma100[len - 1];
+    const cSma200 = toFiniteNum(stock.sma200) ?? sma200[len - 1];
 
-    const cEma9 = ema9[len - 1];
-    const pEma9 = ema9[len - 2];
-    const cEma20 = ema20[len - 1];
-    const pEma20 = ema20[len - 2];
-    const cEma45 = ema45[len - 1];
-    const pEma45 = ema45[len - 2];
-    const cEma50 = ema50[len - 1];
-    const cEma200 = ema200[len - 1];
+    const cEma9 = toFiniteNum(stock.ema9) ?? ema9[len - 1];
+    const pEma9 = len >= 2 ? ema9[len - 2] : cEma9;
+    const cEma20 = toFiniteNum(stock.ema20) ?? ema20[len - 1];
+    const pEma20 = len >= 2 ? ema20[len - 2] : cEma20;
+    const cEma45 = toFiniteNum(stock.ema45) ?? ema45[len - 1];
+    const pEma45 = len >= 2 ? ema45[len - 2] : cEma45;
+    const cEma50 = toFiniteNum(stock.ema50) ?? ema50[len - 1];
+    const cEma200 = toFiniteNum(stock.ema200) ?? ema200[len - 1];
     const pastEma200 = ema200[Math.max(0, len - 21)] ?? cEma200;
 
-    const dailyRsi = rsi14[len - 1] ?? 50;
-    const currentRsiEma45 = rsiEma45[len - 1] ?? 50;
+    const dailyRsi = toFiniteNum(stock.rsi14) ?? rsi14[len - 1] ?? 50;
+    const currentRsiEma45 =
+      toFiniteNum(stock.rsi14Ema45 ?? stock.rsiEma45) ?? rsiEma45[len - 1] ?? 50;
 
-    const cRsi9 = rsi9[len - 1] ?? 50;
-    const cHmEma3 = hmEma3[len - 1] ?? 50;
-    const pHmEma3 = hmEma3[len - 2] ?? 50;
-    const p2HmEma3 = hmEma3[len - 3] ?? 50;
-    const cHmWma21 = hmWma21[len - 1] ?? 50;
-    const pHmWma21 = hmWma21[len - 2] ?? 50;
-    const p2HmWma21 = hmWma21[len - 3] ?? 50;
+    const cRsi9 = toFiniteNum(stock.rsi9) ?? rsi9[len - 1] ?? 50;
+    const cHmEma3 = toFiniteNum(stock.hmEma3) ?? hmEma3[len - 1] ?? 50;
+    const pHmEma3 = (len >= 2 ? hmEma3[len - 2] : null) ?? cHmEma3;
+    const p2HmEma3 = (len >= 3 ? hmEma3[len - 3] : null) ?? pHmEma3;
+    const cHmWma21 = toFiniteNum(stock.hmWma21) ?? hmWma21[len - 1] ?? 50;
+    const pHmWma21 = (len >= 2 ? hmWma21[len - 2] : null) ?? cHmWma21;
+    const p2HmWma21 = (len >= 3 ? hmWma21[len - 3] : null) ?? pHmWma21;
 
-    const cBbUpper = bb.upper[len - 1];
-    const cBbMiddle = bb.middle[len - 1];
-    const cBbLower = bb.lower[len - 1];
-    const cBbWidth = bb.bandwidth[len - 1];
+    const cBbUpper = toFiniteNum(stock.bbUpper) ?? bbUpper[len - 1];
+    const cBbLower = toFiniteNum(stock.bbLower) ?? bbLower[len - 1];
+    const cBbMiddle =
+      toFiniteNum(stock.bbMiddle) ??
+      bbMiddle[len - 1] ??
+      (cBbUpper != null && cBbLower != null ? +((cBbUpper + cBbLower) / 2).toFixed(2) : null);
+    const cBbWidth =
+      bbBandwidth[len - 1] ??
+      (cBbUpper != null && cBbLower != null && cBbMiddle > 0
+        ? +((cBbUpper - cBbLower) / cBbMiddle).toFixed(4)
+        : null);
 
-    const recent20Widths = bb.bandwidth.slice(-20).filter((w) => w != null);
+    const recent20Widths = bbBandwidth.slice(-20).filter((w) => w != null);
     const min20BbWidth = recent20Widths.length ? Math.min(...recent20Widths) : cBbWidth;
 
-    const isAbove50Ema = cEma50 != null ? latest.close > cEma50 : false;
+    const trend50Ref = cEma50 ?? cSma50;
+    const trend200Ref = cEma200 ?? cSma200;
+    const isAbove50Ema = trend50Ref != null ? closePrice > trend50Ref : false;
     const isStage2Uptrend =
-      cEma50 != null &&
-      cEma200 != null &&
-      latest.close > cEma50 &&
-      cEma50 > cEma200 &&
-      cEma200 >= pastEma200 * 0.995;
+      trend50Ref != null &&
+      trend200Ref != null &&
+      closePrice > trend50Ref &&
+      trend50Ref > trend200Ref &&
+      (pastEma200 == null || trend200Ref >= pastEma200 * 0.995);
 
     // 1. 45 EMA Pullback
     const recentTouchEma45 =
-      prev.close <= (pEma45 ?? prev.close) * 1.015 ||
-      candles[len - 3].close <= (ema45[len - 3] ?? candles[len - 3].close) * 1.015 ||
-      candles[len - 4].close <= (ema45[len - 4] ?? candles[len - 4].close) * 1.015;
+      (len >= 2 && prev.close <= (pEma45 ?? prev.close) * 1.015) ||
+      (len >= 3 && candles[len - 3].close <= (ema45[len - 3] ?? candles[len - 3].close) * 1.015) ||
+      (len >= 4 && candles[len - 4].close <= (ema45[len - 4] ?? candles[len - 4].close) * 1.015);
     const crossedAboveEma45 =
       cEma45 != null &&
       pEma45 != null &&
-      latest.close >= cEma45 * 0.996 &&
+      closePrice >= cEma45 * 0.996 &&
       recentTouchEma45;
 
     const matchesPullback =
@@ -555,22 +750,32 @@ function enrichStocks(rawStocks) {
     // 2. 52W / Multi-Year High & Breakout
     const near52WHigh = distFrom52WHighPct >= -2.0;
     const matchesBreakout =
-      (latest.close >= prev52WHigh * 0.988 || distFrom52WHighPct >= -1.5) &&
+      (closePrice >= prev52WHigh * 0.988 || distFrom52WHighPct >= -1.5) &&
       volMultiplier >= 1.5 &&
       changePct > 1.2;
 
-    // 3. RS Rating
-    const { rsRating, rawScore, mom1M } = rsMap.get(stock.symbol);
+    // 3. RS Rating (honor real EOD rsRating when provided)
+    const computedRs = rsMap.get(symbol) || { rsRating: 50, rawScore: 0, mom1M: 0 };
+    const providedRs = toFiniteNum(stock.rsRating);
+    const rsRating =
+      providedRs != null
+        ? Math.max(1, Math.min(99, Math.round(providedRs)))
+        : computedRs.rsRating;
+    const { rawScore, mom1M } = computedRs;
     const matchesRsLeader = rsRating >= 85;
 
     // 4. VCP / Pocket Pivot
     const last10 = candles.slice(-10);
     const prior15 = candles.slice(-25, -10);
+    const rangeSample10 = last10.length > 1 ? last10.slice(0, -1) : last10;
     const avgRange10 =
-      last10.slice(0, 9).reduce((acc, c) => acc + (c.high - c.low) / c.close, 0) / 9;
-    const avgRangePrior15 =
-      prior15.reduce((acc, c) => acc + (c.high - c.low) / c.close, 0) / prior15.length;
-    const rangeContraction = avgRange10 < avgRangePrior15 * 0.85;
+      rangeSample10.reduce((acc, c) => acc + (c.close > 0 ? (c.high - c.low) / c.close : 0), 0) /
+      Math.max(1, rangeSample10.length);
+    const avgRangePrior15 = prior15.length
+      ? prior15.reduce((acc, c) => acc + (c.close > 0 ? (c.high - c.low) / c.close : 0), 0) /
+        prior15.length
+      : avgRange10;
+    const rangeContraction = prior15.length > 0 && avgRange10 < avgRangePrior15 * 0.85;
 
     const prior10DownVols = candles
       .slice(-11, -1)
@@ -578,34 +783,35 @@ function enrichStocks(rawStocks) {
       .map((c) => c.volume);
     const maxDownVol = prior10DownVols.length ? Math.max(...prior10DownVols) : 0;
     const isPocketPivot =
-      latest.close > latest.open && latest.volume > maxDownVol && volMultiplier >= 1.25;
+      latest.close > latest.open && latestVolume > maxDownVol && volMultiplier >= 1.25;
     const matchesVcpPocketPivot = rangeContraction && isPocketPivot;
 
     // 5. SMA & Golden Cross booleans
-    const aboveSma20 = cSma20 != null && latest.close > cSma20;
-    const aboveSma50 = cSma50 != null && latest.close > cSma50;
-    const aboveSma100 = cSma100 != null && latest.close > cSma100;
-    const aboveSma200 = cSma200 != null && latest.close > cSma200;
+    const aboveSma20 = cSma20 != null && closePrice > cSma20;
+    const aboveSma50 = cSma50 != null && closePrice > cSma50;
+    const aboveSma100 = cSma100 != null && closePrice > cSma100;
+    const aboveSma200 = cSma200 != null && closePrice > cSma200;
     const goldenCross50_200 = cSma50 != null && cSma200 != null && cSma50 > cSma200;
 
     // 6. EMA & 9/20 Crossover booleans
-    const aboveEma9 = cEma9 != null && latest.close > cEma9;
-    const aboveEma20 = cEma20 != null && latest.close > cEma20;
-    const aboveEma45 = cEma45 != null && latest.close > cEma45;
-    const aboveEma200 = cEma200 != null && latest.close > cEma200;
+    const aboveEma9 = cEma9 != null && closePrice > cEma9;
+    const aboveEma20 = cEma20 != null && closePrice > cEma20;
+    const aboveEma45 = cEma45 != null && closePrice > cEma45;
+    const aboveEma200 = cEma200 != null && closePrice > cEma200;
     const ema9_20BullCross =
       cEma9 != null &&
       cEma20 != null &&
       cEma9 > cEma20 &&
-      (pEma9 <= pEma20 ||
-        (ema9[len - 3] != null &&
+      ((pEma9 != null && pEma20 != null && pEma9 <= pEma20) ||
+        (len >= 3 &&
+          ema9[len - 3] != null &&
           ema20[len - 3] != null &&
           ema9[len - 3] <= ema20[len - 3]));
 
     // 7. Bollinger Band Signals
     const bbUpperBreakout =
       cBbUpper != null &&
-      latest.close > cBbUpper &&
+      closePrice > cBbUpper &&
       volMultiplier >= 1.25;
     const bbSqueeze =
       cBbWidth != null &&
@@ -614,7 +820,7 @@ function enrichStocks(rawStocks) {
     const bbMiddleBounce =
       cBbMiddle != null &&
       latest.low <= cBbMiddle * 1.015 &&
-      latest.close > cBbMiddle;
+      closePrice > cBbMiddle;
 
     // 8. Hilega Milega (NK Sir) Signals
     const hmBreakout =
@@ -637,9 +843,9 @@ function enrichStocks(rawStocks) {
     else if (isStage2Uptrend) setupBadge = 'Stage 2 Trend';
 
     return {
-      symbol: stock.symbol,
-      name: stock.name,
-      sector: stock.sector,
+      symbol,
+      name,
+      sector,
       candles,
       indicators: {
         sma20,
@@ -651,10 +857,10 @@ function enrichStocks(rawStocks) {
         ema45,
         ema50,
         ema200,
-        bbUpper: bb.upper,
-        bbMiddle: bb.middle,
-        bbLower: bb.lower,
-        bbBandwidth: bb.bandwidth,
+        bbUpper,
+        bbMiddle,
+        bbLower,
+        bbBandwidth,
         volMa20,
         rsi14,
         rsiEma45,
@@ -663,10 +869,10 @@ function enrichStocks(rawStocks) {
         hmWma21,
       },
       metrics: {
-        close: latest.close,
+        close: closePrice,
         prevClose: prev.close,
         changePct,
-        volume: latest.volume,
+        volume: latestVolume,
         avgVol20: Math.round(avgVol20),
         volMultiplier,
         avgTurnoverCr,
@@ -699,7 +905,7 @@ function enrichStocks(rawStocks) {
         isStage2Uptrend,
       },
       setups: {
-        allLiquid: avgTurnoverCr >= 10,
+        allLiquid: isExternal ? true : avgTurnoverCr >= 10,
         pullback45Ema: matchesPullback,
         multiYearBreakout: matchesBreakout,
         near52WHigh,
@@ -786,7 +992,12 @@ export function computeSectorRotation(stocks) {
 
     sectors.push({
       sector: sectorName,
-      displayName: sectorName === 'Consumer EMS' ? 'Consumer & EMS' : `Nifty ${sectorName}`,
+      displayName:
+        sectorName === 'Consumer EMS'
+          ? 'Consumer & EMS'
+          : sectorName === 'NSE Equity'
+          ? 'NSE Equities'
+          : `Nifty ${sectorName}`,
       stockCount: items.length,
       medianRs,
       stage2Pct,
@@ -807,13 +1018,16 @@ export function buildBuiltinDataset() {
     candles: generateStockCandles(spec),
   }));
 
-  const stocks = enrichStocks(rawStocks);
+  const stocks = enrichStocks(rawStocks, { isExternal: false });
   const breadth = computeMarketBreadth(stocks);
   const sectors = computeSectorRotation(stocks);
+  const eodStamp = `${TRADING_DATES[TRADING_DATES.length - 1]} 15:30 IST`;
 
   return {
-    source: 'Built-in NSE Universe (29 Stocks)',
-    lastUpdatedEod: `${TRADING_DATES[TRADING_DATES.length - 1]} 15:30 IST`,
+    source: 'Built-in Fallback (29 Stocks)',
+    isLiveFeed: false,
+    lastUpdated: eodStamp,
+    lastUpdatedEod: eodStamp,
     stocks,
     breadth,
     sectors,
@@ -821,16 +1035,17 @@ export function buildBuiltinDataset() {
 }
 
 export async function fetchEodDataset(overrideUrl) {
-  const targetUrl = (overrideUrl ?? getConfiguredEodUrl()).trim();
+  const targetUrl = (overrideUrl !== undefined ? overrideUrl : getConfiguredEodUrl()).trim();
   if (!targetUrl) {
     return buildBuiltinDataset();
   }
 
+  const requestUrl = withCacheBuster(targetUrl);
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 8000);
+  const timer = setTimeout(() => controller.abort(), 10000);
 
   try {
-    const res = await fetch(targetUrl, {
+    const res = await fetch(requestUrl, {
       cache: 'no-store',
       signal: controller.signal,
     });
@@ -842,10 +1057,21 @@ export async function fetchEodDataset(overrideUrl) {
       throw new Error('Invalid EOD JSON schema');
     }
 
-    const stocks = enrichStocks(payload.stocks);
+    const stocks = enrichStocks(payload.stocks, { isExternal: true });
+    if (stocks.length === 0) {
+      throw new Error('No valid stocks in EOD JSON');
+    }
+
+    const lastUpdated =
+      payload.lastUpdated ||
+      payload.lastUpdatedEod ||
+      new Date().toISOString().slice(0, 10);
+
     return {
-      source: 'External EOD Feed',
-      lastUpdatedEod: payload.lastUpdatedEod || new Date().toISOString().slice(0, 10),
+      source: targetUrl === EOD_DATA_URL ? 'Live EOD (/screener_data.json)' : 'External EOD Feed',
+      isLiveFeed: true,
+      lastUpdated: String(lastUpdated),
+      lastUpdatedEod: String(lastUpdated),
       stocks,
       breadth: payload.breadth || computeMarketBreadth(stocks),
       sectors: computeSectorRotation(stocks),

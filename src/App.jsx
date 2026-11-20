@@ -15,6 +15,7 @@ import {
   Calculator,
 } from 'lucide-react';
 import {
+  EOD_DATA_URL,
   buildBuiltinDataset,
   fetchEodDataset,
   getConfiguredEodUrl,
@@ -391,21 +392,52 @@ export default function App() {
     [alertsMap, dataset.stocks, runAlertEvaluation]
   );
 
-  const handleRefreshEod = async (customUrl) => {
-    setIsRefreshing(true);
-    try {
-      const next = await fetchEodDataset(customUrl);
-      setDataset(next);
-      const hits = runAlertEvaluation(next.stocks, alertsMap, false);
-      if (hits === 0) {
-        showToast(`EOD Synced • ${next.stocks.length} NSE stocks (${next.source})`);
+  const handleRefreshEod = useCallback(
+    async (customUrl, { silentOnFallback = false } = {}) => {
+      setIsRefreshing(true);
+      try {
+        const next = await fetchEodDataset(customUrl);
+        setDataset(next);
+        const hits = runAlertEvaluation(next.stocks, alertsMap, false);
+        if (hits === 0 && !silentOnFallback) {
+          showToast(`EOD Synced • ${next.stocks.length} stocks (${next.lastUpdated})`);
+        }
+      } catch (err) {
+        if (!silentOnFallback) {
+          showToast(
+            `EOD feed unavailable (${err.message}). Using built-in fallback dataset.`
+          );
+        }
+      } finally {
+        setIsRefreshing(false);
       }
-    } catch (err) {
-      showToast(`External feed unavailable (${err.message}). Using built-in NSE EOD data.`);
-    } finally {
-      setIsRefreshing(false);
-    }
-  };
+    },
+    [alertsMap, runAlertEvaluation, showToast]
+  );
+
+  // Fetch /screener_data.json?t=<timestamp> automatically on app startup (with mock fallback)
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      setIsRefreshing(true);
+      try {
+        const liveData = await fetchEodDataset();
+        if (!active) return;
+        setDataset(liveData);
+        if (getNotificationPermissionStatus() === 'granted') {
+          runAlertEvaluation(liveData.stocks, alertsMap, false);
+        }
+      } catch {
+        // /screener_data.json not found locally — keep built-in mock dataset as fallback
+      } finally {
+        if (active) setIsRefreshing(false);
+      }
+    })();
+    return () => {
+      active = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleToggleWatchlist = useCallback((symbol) => {
     setWatchlist((prev) =>
@@ -572,10 +604,17 @@ export default function App() {
             <button
               type="button"
               onClick={() => setShowEodModal(true)}
-              className="mt-0.5 flex items-center gap-1 text-[10px] text-[var(--text-muted)] hover:text-[var(--text-primary)] truncate"
+              className="mt-0.5 flex items-center gap-1 text-[10px] text-[var(--text-muted)] hover:text-[var(--text-primary)] truncate max-w-full"
+              title={`Source: ${dataset.source} • ${dataset.lastUpdated || dataset.lastUpdatedEod}`}
             >
-              <Clock className="w-2.5 h-2.5 text-emerald-500 shrink-0" />
-              <span className="truncate">Last Updated: EOD ({dataset.lastUpdatedEod.slice(0, 10)})</span>
+              <Clock
+                className={`w-2.5 h-2.5 shrink-0 ${
+                  dataset.isLiveFeed ? 'text-emerald-500' : 'text-amber-500'
+                }`}
+              />
+              <span className="truncate">
+                EOD: {dataset.lastUpdated || dataset.lastUpdatedEod}
+              </span>
             </button>
           </div>
         </div>
@@ -801,16 +840,16 @@ export default function App() {
             </div>
 
             <p className="text-xs text-[var(--text-muted)] leading-relaxed">
-              Current source: <strong className="text-[var(--text-primary)]">{dataset.source}</strong>. Paste an
-              external daily <code className="text-emerald-500">screener_data.json</code> URL below,
-              or leave blank to use the built-in 29-stock NSE dataset.
+              Current source: <strong className="text-[var(--text-primary)]">{dataset.source}</strong>. By default the app
+              fetches <code className="text-emerald-500">{EOD_DATA_URL}</code> with cache-busting on startup and
+              refresh, falling back to the built-in 29-stock dataset if not found locally.
             </p>
 
             <input
-              type="url"
+              type="text"
               value={eodUrlInput}
               onChange={(e) => setEodUrlInput(e.target.value)}
-              placeholder="https://example.com/screener_data.json"
+              placeholder="/screener_data.json or https://example.com/screener_data.json"
               className="w-full h-11 px-3 rounded-xl bg-[var(--bg-input)] border border-[var(--border-subtle)] text-xs text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none focus:border-emerald-500"
             />
 
@@ -818,14 +857,14 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => {
-                  setEodUrlInput('');
-                  setConfiguredEodUrl('');
+                  setEodUrlInput(EOD_DATA_URL);
+                  setConfiguredEodUrl(EOD_DATA_URL);
                   setShowEodModal(false);
-                  handleRefreshEod('');
+                  handleRefreshEod(EOD_DATA_URL);
                 }}
                 className="h-10 px-3 rounded-xl bg-[var(--bg-input)] border border-[var(--border-subtle)] text-xs font-semibold text-[var(--text-secondary)]"
               >
-                Use Built-in EOD
+                Default (/screener_data.json)
               </button>
               <button
                 type="submit"
